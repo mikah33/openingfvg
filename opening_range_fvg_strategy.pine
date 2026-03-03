@@ -1,0 +1,391 @@
+// @version=5
+strategy("OR FVG v11", overlay=true, max_lines_count=500, max_boxes_count=500, max_labels_count=500,
+     default_qty_type=strategy.fixed, default_qty_value=1,
+     initial_capital=500, commission_type=strategy.commission.percent, commission_value=0.0,
+     process_orders_on_close=true)
+
+// ── Inputs ──────────────────────────────────────────────────────────
+tz         = input.string("America/New_York", "Timezone", options=["America/New_York", "America/Chicago", "America/Los_Angeles", "UTC"])
+setupMins  = input.int(120, "Setup Expiry (minutes)", minval=15, maxval=240, step=15)
+rrRatio    = input.float(1.9, "Risk:Reward Ratio", minval=1.0, step=0.1)
+riskDay1   = input.float(33.0, "Day 1 Risk %", minval=1.0, maxval=100.0, step=1.0) / 100.0
+riskDay2   = input.float(25.0, "Day 2+ Risk %", minval=1.0, maxval=100.0, step=1.0) / 100.0
+showFVG    = input.bool(true, "Show FVG Zones")
+showRR     = input.bool(true, "Show Entry / SL / TP Lines")
+showStats  = input.bool(true, "Show Stats Table")
+showWeekly = input.bool(true, "Show Weekly P&L Table")
+maxWeeks   = input.int(12, "Weeks to Show", minval=4, maxval=52)
+showDaily  = input.bool(true, "Show Daily P&L Table")
+maxDays    = input.int(20, "Days to Show", minval=5, maxval=60)
+
+// ── 1-Minute Chart Only ──────────────────────────────────────────────
+if timeframe.period != "1"
+    runtime.error("This strategy only works on the 1-minute chart")
+
+// ── OR Session Detection using TradingView built-in ─────────────────
+// time() returns non-na when bar overlaps the session window
+inOR    = not na(time(timeframe.period, "0930-0935:23456", tz))
+newOR   = inOR and not inOR[1]
+orDone  = not inOR and inOR[1]
+
+// ── State ───────────────────────────────────────────────────────────
+var float orHigh  = na
+var float orLow   = na
+var int   phase   = -1   // -1=idle, 0=building OR, 1=scanning, 2=bias set (wait for retest engulfing), 4=done
+var int   bias    = 0
+var float fvgTop  = na
+var float fvgBot  = na
+var int   breakoutBar = 0
+var int   orCloseBar  = 0
+var float retestLevel = na
+var float retestSL    = na
+var float lastBullTop = na
+var float lastBullBot = na
+var int   lastBullBar = 0
+var float lastBearTop = na
+var float lastBearBot = na
+var int   lastBearBar = 0
+var int   tradingDay  = 0    // counts OR sessions: 1 = first day, 2+ = subsequent
+
+// ── Dynamic Risk: 33% on day 1, 25% on day 2+ (compounds off equity) ──
+riskPct = tradingDay <= 1 ? riskDay1 : riskDay2
+
+// ── Phase 0: Build OR ───────────────────────────────────────────────
+if newOR
+    tradingDay += 1
+    orHigh := high
+    orLow  := low
+    phase  := 0
+    bias   := 0
+    fvgTop := na
+    fvgBot := na
+    breakoutBar := 0
+    orCloseBar  := 0
+    retestLevel := na
+    retestSL    := na
+    lastBullTop := na
+    lastBullBot := na
+    lastBullBar := 0
+    lastBearTop := na
+    lastBearBot := na
+    lastBearBar := 0
+
+if phase == 0 and inOR and not newOR
+    orHigh := math.max(orHigh, high)
+    orLow  := math.min(orLow, low)
+
+var line orHighLn = na
+var line orLowLn  = na
+if phase == 0 and orDone
+    phase      := 1
+    orCloseBar := bar_index
+    orHighLn := line.new(bar_index - 5, orHigh, bar_index + setupMins, orHigh, color=color.blue, width=3)
+    orLowLn  := line.new(bar_index - 5, orLow,  bar_index + setupMins, orLow,  color=color.blue, width=3)
+    label.new(bar_index, orHigh, "OR: " + str.tostring(orHigh, "#.##") + " / " + str.tostring(orLow, "#.##"),
+         style=label.style_label_down, color=color.blue, textcolor=color.white, size=size.normal)
+
+// ── FVG Detection ─────────────────────────────────────────────────────
+atrVal  = ta.atr(14)
+fvgTol  = atrVal * 0.1
+bullFVG0 = low > high[2] - fvgTol
+bearFVG0 = high < low[2] + fvgTol
+
+// ── Track FVGs as they form (every bar) ──────────────────────────────
+// Save the most recent bull/bear FVG coords so we don't miss FVGs
+// that formed early in a multi-bar breakout move.
+fvgMaxAge = 15
+if phase >= 1
+    if bullFVG0
+        lastBullTop := low
+        lastBullBot := high[2]
+        lastBullBar := bar_index - 2
+    if bearFVG0
+        lastBearTop := low[2]
+        lastBearBot := high
+        lastBearBar := bar_index - 2
+
+// ── STEP 1: Invalidation ─────────────────────────────────────────────
+// Before retest: invalidate if close blows through FVG boundary
+// After retest started: invalidate if close blows through retest candle's
+// extreme (retestSL) — this prevents tight FVGs from instant-invalidating
+// when the retest candle wicks through the small zone.
+// Day expires if no trade found within setupMins of OR close.
+// Measured from OR close (9:35 AM), not from breakout. Kills the entire day.
+dayExpired = phase >= 1 and phase < 4 and orCloseBar > 0 and (bar_index - orCloseBar) > setupMins
+if dayExpired
+    bias        := 0
+    phase       := -1
+    retestLevel := na
+    retestSL    := na
+    if strategy.position_size != 0
+        strategy.close_all("Day Expired")
+
+if phase == 2
+    if bias == 1
+        invLevel = na(retestLevel) ? fvgBot : retestSL
+        if close < invLevel
+            bias        := 0
+            phase       := 1
+            retestLevel := na
+            retestSL    := na
+            if strategy.position_size != 0
+                strategy.close_all("Invalidated")
+    if bias == -1
+        invLevel = na(retestLevel) ? fvgTop : retestSL
+        if close > invLevel
+            bias        := 0
+            phase       := 1
+            retestLevel := na
+            retestSL    := na
+            if strategy.position_size != 0
+                strategy.close_all("Invalidated")
+
+// ── STEP 2: Breakout + FVG scanner ─────────────────────────────────
+// Runs in phase 1 (scanning) AND phase 2 (opposite-direction flip).
+// When price chops thru the range, this catches the opposite breakout
+// immediately — grabbing the FVG near the OR level before it gets
+// overwritten by later FVGs forming further away.
+hasBearFVG = not na(lastBearTop) and bar_index - lastBearBar <= fvgMaxAge
+hasBullFVG = not na(lastBullTop) and bar_index - lastBullBar <= fvgMaxAge
+
+if phase == 1 or phase == 2
+    // Bearish breakout
+    if close < orLow and hasBearFVG and bias != -1
+        bias        := -1
+        fvgTop      := lastBearTop
+        fvgBot      := lastBearBot
+        phase       := 2
+        breakoutBar := bar_index
+        retestLevel := na
+        retestSL    := na
+        if strategy.position_size != 0
+            strategy.close_all("Bias Flip")
+        if showFVG
+            box.new(lastBearBar, fvgTop, bar_index + 50, fvgBot,
+                 border_color=color.new(color.red, 30), bgcolor=color.new(color.red, 85),
+                 text="FVG", text_color=color.red)
+
+    // Bullish breakout
+    else if close > orHigh and hasBullFVG and bias != 1
+        bias        := 1
+        fvgTop      := lastBullTop
+        fvgBot      := lastBullBot
+        phase       := 2
+        breakoutBar := bar_index
+        retestLevel := na
+        retestSL    := na
+        if strategy.position_size != 0
+            strategy.close_all("Bias Flip")
+        if showFVG
+            box.new(lastBullBar, fvgTop, bar_index + 50, fvgBot,
+                 border_color=color.new(color.green, 30), bgcolor=color.new(color.green, 85),
+                 text="FVG", text_color=color.green)
+
+// ── STEP 3: FVG Retest + Engulf Entry ───────────────────────────────
+// When a candle wicks INTO the FVG zone, track its HIGH (bull) / LOW (bear).
+// Entry triggers when a subsequent candle CLOSES above that tracked high
+// (bull) or below that tracked low (bear) — the retest candle gets "engulfed."
+inFVG = false
+if phase == 2 and bar_index > breakoutBar
+    if bias == 1 and low <= fvgTop
+        inFVG := true
+        retestLevel := high   // track retest candle's high
+        retestSL    := low    // SL = retest candle's low
+    if bias == -1 and high >= fvgBot
+        inFVG := true
+        retestLevel := low    // track retest candle's low
+        retestSL    := high   // SL = retest candle's high
+
+// Visual indicators on retest candles (candles inside FVG zone)
+plotshape(inFVG and bias == 1,  "Retest (Bull)", location=location.belowbar, color=color.new(color.yellow, 0), style=shape.circle, size=size.tiny)
+plotshape(inFVG and bias == -1, "Retest (Bear)", location=location.abovebar, color=color.new(color.yellow, 0), style=shape.circle, size=size.tiny)
+
+// Entry: retest candle's high/low gets engulfed (close beyond it)
+longSignal  = phase == 2 and bar_index > breakoutBar and bias == 1  and not na(retestLevel) and close > retestLevel
+shortSignal = phase == 2 and bar_index > breakoutBar and bias == -1 and not na(retestLevel) and close < retestLevel
+
+// ── Phase 4: Trade ──────────────────────────────────────────────────
+if longSignal
+    entryPx = close
+    slPx    = retestSL
+    tpPx    = close + (close - retestSL) * rrRatio
+    riskPts = close - retestSL
+    riskDol = riskPts * syminfo.pointvalue
+    qty     = math.floor(strategy.equity * riskPct / riskDol)
+    if qty >= 1
+        phase := 4
+        strategy.entry("Long", strategy.long, qty=qty)
+        strategy.exit("Long TP/SL", "Long", stop=slPx, limit=tpPx)
+        label.new(bar_index, low, "LONG", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.large)
+        if showRR
+            line.new(bar_index, entryPx, bar_index + 50, entryPx, color=color.yellow, style=line.style_solid, width=2)
+            line.new(bar_index, slPx, bar_index + 50, slPx, color=color.red, style=line.style_solid, width=2)
+            line.new(bar_index, tpPx, bar_index + 50, tpPx, color=color.green, style=line.style_solid, width=2)
+            label.new(bar_index + 50, entryPx, "Entry " + str.tostring(entryPx, "#.##") + "  (x" + str.tostring(qty) + ")", style=label.style_label_left, color=color.yellow, textcolor=color.black, size=size.normal)
+            label.new(bar_index + 50, slPx, "SL " + str.tostring(slPx, "#.##") + "  (-$" + str.tostring(riskPts * qty * syminfo.pointvalue, "#.##") + ")", style=label.style_label_left, color=color.red, textcolor=color.white, size=size.normal)
+            label.new(bar_index + 50, tpPx, "TP " + str.tostring(tpPx, "#.##") + "  (+$" + str.tostring((tpPx - entryPx) * qty * syminfo.pointvalue, "#.##") + ")", style=label.style_label_left, color=color.green, textcolor=color.white, size=size.normal)
+
+if shortSignal
+    entryPx = close
+    slPx    = retestSL
+    tpPx    = close - (retestSL - close) * rrRatio
+    riskPts = retestSL - close
+    riskDol = riskPts * syminfo.pointvalue
+    qty     = math.floor(strategy.equity * riskPct / riskDol)
+    if qty >= 1
+        phase := 4
+        strategy.entry("Short", strategy.short, qty=qty)
+        strategy.exit("Short TP/SL", "Short", stop=slPx, limit=tpPx)
+        label.new(bar_index, high, "SHORT", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.large)
+        if showRR
+            line.new(bar_index, entryPx, bar_index + 50, entryPx, color=color.yellow, style=line.style_solid, width=2)
+            line.new(bar_index, slPx, bar_index + 50, slPx, color=color.red, style=line.style_solid, width=2)
+            line.new(bar_index, tpPx, bar_index + 50, tpPx, color=color.green, style=line.style_solid, width=2)
+            label.new(bar_index + 50, entryPx, "Entry " + str.tostring(entryPx, "#.##") + "  (x" + str.tostring(qty) + ")", style=label.style_label_left, color=color.yellow, textcolor=color.black, size=size.normal)
+            label.new(bar_index + 50, slPx, "SL " + str.tostring(slPx, "#.##") + "  (-$" + str.tostring(riskPts * qty * syminfo.pointvalue, "#.##") + ")", style=label.style_label_left, color=color.red, textcolor=color.white, size=size.normal)
+            label.new(bar_index + 50, tpPx, "TP " + str.tostring(tpPx, "#.##") + "  (+$" + str.tostring((tpPx - entryPx) * qty * syminfo.pointvalue, "#.##") + ")", style=label.style_label_left, color=color.green, textcolor=color.white, size=size.normal)
+
+// ── Signal Markers ──────────────────────────────────────────────────
+plotshape(longSignal, title="Long", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.small)
+plotshape(shortSignal, title="Short", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.small)
+
+// ── Bias Background ─────────────────────────────────────────────────
+bgcolor(phase >= 2 and bias == 1  ? color.new(color.green, 95) : na, title="Bullish Bias")
+bgcolor(phase >= 2 and bias == -1 ? color.new(color.red, 95)   : na, title="Bearish Bias")
+
+// ── Stats Table ─────────────────────────────────────────────────────
+if showStats and barstate.islast
+    totalTrades  = strategy.closedtrades
+    wins         = strategy.wintrades
+    losses       = strategy.losstrades
+    winRate      = totalTrades > 0 ? (wins / totalTrades) * 100 : 0.0
+    netProfit    = strategy.netprofit
+    grossProfit  = strategy.grossprofit
+    grossLoss    = strategy.grossloss
+    profitFactor = grossLoss != 0 ? grossProfit / math.abs(grossLoss) : 0.0
+    avgWin       = wins > 0 ? grossProfit / wins : 0.0
+    avgLoss      = losses > 0 ? math.abs(grossLoss) / losses : 0.0
+    var table st = table.new(position.top_right, 2, 9, bgcolor=color.new(color.black, 20), border_width=1)
+    table.cell(st, 0, 0, "OR FVG v11", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 40))
+    table.cell(st, 1, 0, "", bgcolor=color.new(color.gray, 40))
+    table.cell(st, 0, 1, "Total Trades", text_color=color.white, text_size=size.small)
+    table.cell(st, 1, 1, str.tostring(totalTrades), text_color=color.white, text_size=size.small)
+    table.cell(st, 0, 2, "Wins", text_color=color.white, text_size=size.small)
+    table.cell(st, 1, 2, str.tostring(wins), text_color=color.green, text_size=size.small)
+    table.cell(st, 0, 3, "Losses", text_color=color.white, text_size=size.small)
+    table.cell(st, 1, 3, str.tostring(losses), text_color=color.red, text_size=size.small)
+    table.cell(st, 0, 4, "Win Rate", text_color=color.white, text_size=size.small)
+    table.cell(st, 1, 4, str.tostring(winRate, "#.#") + "%", text_color=winRate >= 50 ? color.green : color.red, text_size=size.small)
+    table.cell(st, 0, 5, "Net Profit", text_color=color.white, text_size=size.small)
+    table.cell(st, 1, 5, "$" + str.tostring(netProfit, "#.##"), text_color=netProfit >= 0 ? color.green : color.red, text_size=size.small)
+    table.cell(st, 0, 6, "Profit Factor", text_color=color.white, text_size=size.small)
+    table.cell(st, 1, 6, str.tostring(profitFactor, "#.##"), text_color=profitFactor >= 1 ? color.green : color.red, text_size=size.small)
+    table.cell(st, 0, 7, "Avg Win", text_color=color.white, text_size=size.small)
+    table.cell(st, 1, 7, "$" + str.tostring(avgWin, "#.##"), text_color=color.green, text_size=size.small)
+    table.cell(st, 0, 8, "Avg Loss", text_color=color.white, text_size=size.small)
+    table.cell(st, 1, 8, "$" + str.tostring(avgLoss, "#.##"), text_color=color.red, text_size=size.small)
+
+// ── Weekly P&L ──────────────────────────────────────────────────────
+if showWeekly and barstate.islast
+    numTrades = strategy.closedtrades
+    var wk = array.new_string(0), var wp = array.new_float(0), var ww = array.new_int(0), var wl = array.new_int(0)
+    array.clear(wk), array.clear(wp), array.clear(ww), array.clear(wl)
+    if numTrades > 0
+        for i = 0 to numTrades - 1
+            et = strategy.closedtrades.exit_time(i)
+            pr = strategy.closedtrades.profit(i)
+            key = str.tostring(year(et, tz)) + "-W" + (weekofyear(et, tz) < 10 ? "0" : "") + str.tostring(weekofyear(et, tz))
+            idx = array.indexof(wk, key)
+            if idx == -1
+                array.push(wk, key), array.push(wp, pr), array.push(ww, pr > 0 ? 1 : 0), array.push(wl, pr <= 0 ? 1 : 0)
+            else
+                array.set(wp, idx, array.get(wp, idx) + pr)
+                if pr > 0
+                    array.set(ww, idx, array.get(ww, idx) + 1)
+                else
+                    array.set(wl, idx, array.get(wl, idx) + 1)
+    tw = array.size(wk)
+    si = math.max(0, tw - maxWeeks)
+    rc = tw - si
+    var table wt = table.new(position.bottom_right, 5, 60, bgcolor=color.new(color.black, 20), border_width=1)
+    table.cell(wt, 0, 0, "Week", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 40))
+    table.cell(wt, 1, 0, "Trades", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 40))
+    table.cell(wt, 2, 0, "Wins", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 40))
+    table.cell(wt, 3, 0, "Losses", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 40))
+    table.cell(wt, 4, 0, "P&L", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 40))
+    cum = 0.0
+    if rc > 0
+        for i = 0 to rc - 1
+            ai = si + i
+            p = array.get(wp, ai)
+            w = array.get(ww, ai)
+            l = array.get(wl, ai)
+            cum += p
+            r = i + 1
+            table.cell(wt, 0, r, array.get(wk, ai), text_color=color.white, text_size=size.small)
+            table.cell(wt, 1, r, str.tostring(w + l), text_color=color.white, text_size=size.small)
+            table.cell(wt, 2, r, str.tostring(w), text_color=color.green, text_size=size.small)
+            table.cell(wt, 3, r, str.tostring(l), text_color=color.red, text_size=size.small)
+            table.cell(wt, 4, r, (p >= 0 ? "+$" : "-$") + str.tostring(math.abs(p), "#.##"), text_color=p >= 0 ? color.green : color.red, text_size=size.small)
+    tr = rc + 1
+    table.cell(wt, 0, tr, "TOTAL", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 40))
+    table.cell(wt, 1, tr, "", bgcolor=color.new(color.gray, 40))
+    table.cell(wt, 2, tr, "", bgcolor=color.new(color.gray, 40))
+    table.cell(wt, 3, tr, "", bgcolor=color.new(color.gray, 40))
+    table.cell(wt, 4, tr, (cum >= 0 ? "+$" : "-$") + str.tostring(math.abs(cum), "#.##"), text_color=cum >= 0 ? color.green : color.red, text_size=size.normal, bgcolor=color.new(color.gray, 40))
+
+// ── Daily P&L ──────────────────────────────────────────────────────
+if showDaily and barstate.islast
+    numTradesD = strategy.closedtrades
+    var dk = array.new_string(0), var dp = array.new_float(0), var dw = array.new_int(0), var dl = array.new_int(0)
+    array.clear(dk), array.clear(dp), array.clear(dw), array.clear(dl)
+    if numTradesD > 0
+        for i = 0 to numTradesD - 1
+            et = strategy.closedtrades.exit_time(i)
+            pr = strategy.closedtrades.profit(i)
+            yy = str.tostring(year(et, tz))
+            mm = (month(et, tz) < 10 ? "0" : "") + str.tostring(month(et, tz))
+            dd = (dayofmonth(et, tz) < 10 ? "0" : "") + str.tostring(dayofmonth(et, tz))
+            key = yy + "-" + mm + "-" + dd
+            idx = array.indexof(dk, key)
+            if idx == -1
+                array.push(dk, key), array.push(dp, pr), array.push(dw, pr > 0 ? 1 : 0), array.push(dl, pr <= 0 ? 1 : 0)
+            else
+                array.set(dp, idx, array.get(dp, idx) + pr)
+                if pr > 0
+                    array.set(dw, idx, array.get(dw, idx) + 1)
+                else
+                    array.set(dl, idx, array.get(dl, idx) + 1)
+    td = array.size(dk)
+    sid = math.max(0, td - maxDays)
+    rcd = td - sid
+    var table dt = table.new(position.bottom_left, 5, 65, bgcolor=color.new(color.black, 20), border_width=1)
+    table.cell(dt, 0, 0, "Date", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 40))
+    table.cell(dt, 1, 0, "Trades", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 40))
+    table.cell(dt, 2, 0, "Wins", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 40))
+    table.cell(dt, 3, 0, "Losses", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 40))
+    table.cell(dt, 4, 0, "P&L", text_color=color.white, text_size=size.small, bgcolor=color.new(color.gray, 40))
+    cumd = 0.0
+    if rcd > 0
+        for i = 0 to rcd - 1
+            ai = sid + i
+            p = array.get(dp, ai)
+            w = array.get(dw, ai)
+            l = array.get(dl, ai)
+            cumd += p
+            r = i + 1
+            rowBg = p > 0 ? color.new(color.green, 85) : p < 0 ? color.new(color.red, 85) : color.new(color.gray, 85)
+            table.cell(dt, 0, r, array.get(dk, ai), text_color=color.white, text_size=size.small, bgcolor=rowBg)
+            table.cell(dt, 1, r, str.tostring(w + l), text_color=color.white, text_size=size.small, bgcolor=rowBg)
+            table.cell(dt, 2, r, str.tostring(w), text_color=color.green, text_size=size.small, bgcolor=rowBg)
+            table.cell(dt, 3, r, str.tostring(l), text_color=color.red, text_size=size.small, bgcolor=rowBg)
+            table.cell(dt, 4, r, (p >= 0 ? "+$" : "-$") + str.tostring(math.abs(p), "#.##"), text_color=p >= 0 ? color.green : color.red, text_size=size.small, bgcolor=rowBg)
+    trd = rcd + 1
+    table.cell(dt, 0, trd, "TOTAL", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.gray, 40))
+    table.cell(dt, 1, trd, "", bgcolor=color.new(color.gray, 40))
+    table.cell(dt, 2, trd, "", bgcolor=color.new(color.gray, 40))
+    table.cell(dt, 3, trd, "", bgcolor=color.new(color.gray, 40))
+    table.cell(dt, 4, trd, (cumd >= 0 ? "+$" : "-$") + str.tostring(math.abs(cumd), "#.##"), text_color=cumd >= 0 ? color.green : color.red, text_size=size.normal, bgcolor=color.new(color.gray, 40))
+
+alertcondition(longSignal, title="Long Entry", message="OR FVG — LONG")
+alertcondition(shortSignal, title="Short Entry", message="OR FVG — SHORT")
