@@ -1,0 +1,33 @@
+# Copy this to config.yaml and fill in your credentials
+# DO NOT commit config.yaml to git
+
+tradovate:
+  username: "your_username"
+  password: "your_password"
+  app_id: "OR_FVG_Bot"
+  app_version: "1.0.0"
+  cid: 0              # your API client ID (number)
+  sec: "your_secret"  # your API secret
+  device_id: ""       # leave blank, auto-generated on first run
+  mode: "demo"        # "demo" or "live"
+
+strategy:
+  symbol: "MESM5"               # MES front-month contract (update quarterly)
+  rr_ratio: 1.75
+  risk_day1_pct: 0.33
+  risk_day2_pct: 0.25
+  risk_day3_15_pct: 0.15
+  risk_day16_plus_pct: 0.05
+  max_risk_dollars: 2500.0
+  point_value: 5.0     # MES = $5 per point
+  tick_size: 0.25      # MES tick size
+
+webhook:
+  host: "0.0.0.0"
+  port: 8080
+  secret_path: "webhook"         # URL will be http://your-domain/{secret_path}
+  passphrase: "your_secret_passphrase"  # must match Pine Script input
+
+telegram:
+  bot_token: ""     # from @BotFather
+  chat_id: 0        # your Telegram user/chat ID

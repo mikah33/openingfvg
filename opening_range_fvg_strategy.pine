@@ -7,9 +7,11 @@ strategy("OR FVG v11", overlay=true, max_lines_count=500, max_boxes_count=500, m
 // ── Inputs ──────────────────────────────────────────────────────────
 tz         = input.string("America/New_York", "Timezone", options=["America/New_York", "America/Chicago", "America/Los_Angeles", "UTC"])
 setupMins  = input.int(120, "Setup Expiry (minutes)", minval=15, maxval=240, step=15)
-rrRatio    = input.float(1.9, "Risk:Reward Ratio", minval=1.0, step=0.1)
-riskDay1   = input.float(33.0, "Day 1 Risk %", minval=1.0, maxval=100.0, step=1.0) / 100.0
-riskDay2   = input.float(25.0, "Day 2+ Risk %", minval=1.0, maxval=100.0, step=1.0) / 100.0
+rrRatio    = input.float(1.75, "Risk:Reward Ratio", minval=1.0, step=0.1)
+riskDay1   = input.float(33.0, "Trade 1 Risk %", minval=1.0, maxval=100.0, step=1.0) / 100.0
+riskDay2   = input.float(25.0, "Trade 2 Risk %", minval=1.0, maxval=100.0, step=1.0) / 100.0
+riskDay3   = input.float(15.0, "Trade 3+ Risk %", minval=1.0, maxval=100.0, step=1.0) / 100.0
+passKey    = input.string("", "Webhook Passphrase", tooltip="Must match config.yaml passphrase for bot")
 showFVG    = input.bool(true, "Show FVG Zones")
 showRR     = input.bool(true, "Show Entry / SL / TP Lines")
 showStats  = input.bool(true, "Show Stats Table")
@@ -45,14 +47,13 @@ var int   lastBullBar = 0
 var float lastBearTop = na
 var float lastBearBot = na
 var int   lastBearBar = 0
-var int   tradingDay  = 0    // counts OR sessions: 1 = first day, 2+ = subsequent
+var int   tradeCount  = 0    // counts trades taken: 1 = first trade, 2 = second, 3+ = subsequent
 
-// ── Dynamic Risk: 33% on day 1, 25% on day 2+ (compounds off equity) ──
-riskPct = tradingDay <= 1 ? riskDay1 : riskDay2
+// ── Dynamic Risk: 33% trade 1, 25% trade 2, 15% trade 3+ (compounds off equity) ──
+riskPct = tradeCount < 1 ? riskDay1 : tradeCount == 1 ? riskDay2 : riskDay3
 
 // ── Phase 0: Build OR ───────────────────────────────────────────────
 if newOR
-    tradingDay += 1
     orHigh := high
     orLow  := low
     phase  := 0
@@ -118,7 +119,7 @@ if dayExpired
     retestLevel := na
     retestSL    := na
     if strategy.position_size != 0
-        strategy.close_all("Day Expired")
+        strategy.close_all("Day Expired", alert_message='{"action":"CLOSE_ALL","reason":"Day Expired","passphrase":"' + passKey + '"}')
 
 if phase == 2
     if bias == 1
@@ -129,7 +130,7 @@ if phase == 2
             retestLevel := na
             retestSL    := na
             if strategy.position_size != 0
-                strategy.close_all("Invalidated")
+                strategy.close_all("Invalidated", alert_message='{"action":"CLOSE_ALL","reason":"Invalidated","passphrase":"' + passKey + '"}')
     if bias == -1
         invLevel = na(retestLevel) ? fvgTop : retestSL
         if close > invLevel
@@ -138,7 +139,7 @@ if phase == 2
             retestLevel := na
             retestSL    := na
             if strategy.position_size != 0
-                strategy.close_all("Invalidated")
+                strategy.close_all("Invalidated", alert_message='{"action":"CLOSE_ALL","reason":"Invalidated","passphrase":"' + passKey + '"}')
 
 // ── STEP 2: Breakout + FVG scanner ─────────────────────────────────
 // Runs in phase 1 (scanning) AND phase 2 (opposite-direction flip).
@@ -159,7 +160,7 @@ if phase == 1 or phase == 2
         retestLevel := na
         retestSL    := na
         if strategy.position_size != 0
-            strategy.close_all("Bias Flip")
+            strategy.close_all("Bias Flip", alert_message='{"action":"CLOSE_ALL","reason":"Bias Flip","passphrase":"' + passKey + '"}')
         if showFVG
             box.new(lastBearBar, fvgTop, bar_index + 50, fvgBot,
                  border_color=color.new(color.red, 30), bgcolor=color.new(color.red, 85),
@@ -175,7 +176,7 @@ if phase == 1 or phase == 2
         retestLevel := na
         retestSL    := na
         if strategy.position_size != 0
-            strategy.close_all("Bias Flip")
+            strategy.close_all("Bias Flip", alert_message='{"action":"CLOSE_ALL","reason":"Bias Flip","passphrase":"' + passKey + '"}')
         if showFVG
             box.new(lastBullBar, fvgTop, bar_index + 50, fvgBot,
                  border_color=color.new(color.green, 30), bgcolor=color.new(color.green, 85),
@@ -211,10 +212,11 @@ if longSignal
     tpPx    = close + (close - retestSL) * rrRatio
     riskPts = close - retestSL
     riskDol = riskPts * syminfo.pointvalue
-    qty     = math.floor(strategy.equity * riskPct / riskDol)
+    qty     = math.ceil(strategy.equity * riskPct / riskDol)
     if qty >= 1
+        tradeCount += 1
         phase := 4
-        strategy.entry("Long", strategy.long, qty=qty)
+        strategy.entry("Long", strategy.long, qty=qty, alert_message='{"action":"LONG_ENTRY","entry_price":' + str.tostring(entryPx) + ',"stop_loss":' + str.tostring(slPx) + ',"take_profit":' + str.tostring(tpPx) + ',"qty":' + str.tostring(qty) + ',"passphrase":"' + passKey + '"}')
         strategy.exit("Long TP/SL", "Long", stop=slPx, limit=tpPx)
         label.new(bar_index, low, "LONG", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.large)
         if showRR
@@ -231,10 +233,11 @@ if shortSignal
     tpPx    = close - (retestSL - close) * rrRatio
     riskPts = retestSL - close
     riskDol = riskPts * syminfo.pointvalue
-    qty     = math.floor(strategy.equity * riskPct / riskDol)
+    qty     = math.ceil(strategy.equity * riskPct / riskDol)
     if qty >= 1
+        tradeCount += 1
         phase := 4
-        strategy.entry("Short", strategy.short, qty=qty)
+        strategy.entry("Short", strategy.short, qty=qty, alert_message='{"action":"SHORT_ENTRY","entry_price":' + str.tostring(entryPx) + ',"stop_loss":' + str.tostring(slPx) + ',"take_profit":' + str.tostring(tpPx) + ',"qty":' + str.tostring(qty) + ',"passphrase":"' + passKey + '"}')
         strategy.exit("Short TP/SL", "Short", stop=slPx, limit=tpPx)
         label.new(bar_index, high, "SHORT", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.large)
         if showRR
@@ -387,5 +390,5 @@ if showDaily and barstate.islast
     table.cell(dt, 3, trd, "", bgcolor=color.new(color.gray, 40))
     table.cell(dt, 4, trd, (cumd >= 0 ? "+$" : "-$") + str.tostring(math.abs(cumd), "#.##"), text_color=cumd >= 0 ? color.green : color.red, text_size=size.normal, bgcolor=color.new(color.gray, 40))
 
-alertcondition(longSignal, title="Long Entry", message="OR FVG — LONG")
-alertcondition(shortSignal, title="Short Entry", message="OR FVG — SHORT")
+// Webhook alerts are embedded via alert_message in strategy.entry() and strategy.close_all()
+// Create a TradingView alert on this strategy with "Webhook URL" and select "alert_message" as the message
