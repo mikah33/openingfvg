@@ -14,7 +14,7 @@ tradovate:
 strategy:
   symbol: "MESM5"               # MES front-month contract (update quarterly)
   rr_tp1: 1.4               # scale out half at 1.4R
-  rr_tp2: 1.85              # runner target at 1.85R
+  rr_tp2: 1.75              # runner target at 1.75R
   risk_day1_pct: 0.33
   risk_day2_pct: 0.25
   risk_day3_15_pct: 0.15

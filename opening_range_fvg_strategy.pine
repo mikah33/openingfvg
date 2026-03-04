@@ -8,7 +8,7 @@ strategy("OR FVG v11", overlay=true, max_lines_count=500, max_boxes_count=500, m
 tz         = input.string("America/New_York", "Timezone", options=["America/New_York", "America/Chicago", "America/Los_Angeles", "UTC"])
 setupMins  = input.int(120, "Setup Expiry (minutes)", minval=15, maxval=240, step=15)
 rrTP1      = input.float(1.4, "TP1 R:R (scale out half)", minval=0.5, step=0.1)
-rrTP2      = input.float(1.85, "TP2 R:R (runner)", minval=1.0, step=0.1)
+rrTP2      = input.float(1.75, "TP2 R:R (runner)", minval=1.0, step=0.1)
 riskDay1   = input.float(33.0, "Trade 1 Risk %", minval=1.0, maxval=100.0, step=1.0) / 100.0
 riskDay2   = input.float(25.0, "Trade 2 Risk %", minval=1.0, maxval=100.0, step=1.0) / 100.0
 riskDay3   = input.float(15.0, "Trade 3+ Risk %", minval=1.0, maxval=100.0, step=1.0) / 100.0

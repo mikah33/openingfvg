@@ -43,7 +43,7 @@ class StrategyConfig:
     or_end: str = "09:35"
     setup_expiry_minutes: int = 120
     rr_tp1: float = 1.4
-    rr_tp2: float = 1.85
+    rr_tp2: float = 1.75
     risk_day1_pct: float = 0.33
     risk_day2_pct: float = 0.25
     risk_day3_15_pct: float = 0.15
