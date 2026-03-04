@@ -66,18 +66,13 @@ if tradeClosed and phase == 4
         lastProfit = strategy.closedtrades.profit(lastIdx)
         if lastProfit < 0 and not reboundTaken
             // Loss hit — SL ripped through iFVG, look for rebound trade
+            // Keep existing FVGs! The FVG that formed during the rip is
+            // exactly what we need for the rebound entry.
             hadLossToday := true
             phase       := 1   // back to scanning
             bias        := 0
             retestLevel := na
             retestSL    := na
-            // Reset FVG tracking for fresh detection
-            lastBullTop := na
-            lastBullBot := na
-            lastBullBar := 0
-            lastBearTop := na
-            lastBearBot := na
-            lastBearBar := 0
 
 // ── Phase 0: Build OR ───────────────────────────────────────────────
 if newOR
