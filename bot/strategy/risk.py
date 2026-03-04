@@ -46,9 +46,9 @@ class RiskManager:
             return None
 
         if is_long:
-            tp_price = entry_price + (risk_pts * self._config.rr_ratio)
+            tp_price = entry_price + (risk_pts * self._config.rr_tp2)
         else:
-            tp_price = entry_price - (risk_pts * self._config.rr_ratio)
+            tp_price = entry_price - (risk_pts * self._config.rr_tp2)
 
         tp_price = self._snap_to_tick(tp_price)
         sl_price = self._snap_to_tick(sl_price)

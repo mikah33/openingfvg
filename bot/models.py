@@ -13,7 +13,8 @@ class TradeSignal(BaseModel):
     action: Action
     entry_price: float
     stop_loss: float
-    take_profit: float
+    tp1: float
+    tp2: float
     qty: int
     passphrase: str = ""
 
@@ -30,7 +31,8 @@ class WebhookPayload(BaseModel):
     passphrase: str = ""
     entry_price: float | None = None
     stop_loss: float | None = None
-    take_profit: float | None = None
+    tp1: float | None = None
+    tp2: float | None = None
     qty: int | None = None
     reason: str | None = None
 
@@ -45,7 +47,8 @@ class WebhookPayload(BaseModel):
             action=Action(self.action),
             entry_price=self.entry_price,
             stop_loss=self.stop_loss,
-            take_profit=self.take_profit,
+            tp1=self.tp1,
+            tp2=self.tp2,
             qty=self.qty,
             passphrase=self.passphrase,
         )

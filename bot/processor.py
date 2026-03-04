@@ -77,8 +77,8 @@ class AlertProcessor:
         direction = "LONG" if is_long else "SHORT"
 
         log.info(
-            "Entry signal: %s entry=%.2f SL=%.2f TP=%.2f qty=%d",
-            direction, signal.entry_price, signal.stop_loss, signal.take_profit, signal.qty,
+            "Entry signal: %s entry=%.2f SL=%.2f TP1=%.2f TP2=%.2f qty=%d",
+            direction, signal.entry_price, signal.stop_loss, signal.tp1, signal.tp2, signal.qty,
         )
 
         # Check if paused
@@ -112,25 +112,54 @@ class AlertProcessor:
             await self._send_notification(msg)
             return
 
-        # Place bracket order
+        total_qty = pos["qty"]
+        sl = pos["sl"]
+
+        # Split into TP1 (scale out half) and TP2 (runner)
+        if total_qty >= 2:
+            qty1 = total_qty // 2       # half rounded down for TP1
+            qty2 = total_qty - qty1     # rest for TP2
+        else:
+            qty1 = 0                    # can't split 1 contract
+            qty2 = total_qty
+
+        tp1 = self._risk._snap_to_tick(signal.tp1)
+        tp2 = self._risk._snap_to_tick(signal.tp2)
+
         log.info(
-            "Placing %s bracket: qty=%d entry=%.2f SL=%.2f TP=%.2f risk=$%.2f",
-            direction, pos["qty"], pos["entry"], pos["sl"], pos["tp"], pos["risk_dollars"],
+            "Placing %s: total=%d, TP1 x%d @ %.2f, TP2 x%d @ %.2f, SL=%.2f",
+            direction, total_qty, qty1, tp1, qty2, tp2, sl,
         )
 
-        result = await self._orders_ws.place_bracket_order(pos)
+        success = True
 
-        if result is not None:
+        # Place TP1 bracket (scale out half at 1.4R)
+        if qty1 > 0:
+            pos1 = {"qty": qty1, "entry": pos["entry"], "sl": sl, "tp": tp1, "is_long": is_long, "risk_dollars": 0}
+            r1 = await self._orders_ws.place_bracket_order(pos1)
+            if r1 is None:
+                log.error("TP1 bracket order failed")
+                success = False
+
+        # Place TP2 bracket (runner at 1.85R)
+        pos2 = {"qty": qty2, "entry": pos["entry"], "sl": sl, "tp": tp2, "is_long": is_long, "risk_dollars": 0}
+        r2 = await self._orders_ws.place_bracket_order(pos2)
+        if r2 is None:
+            log.error("TP2 bracket order failed")
+            success = False
+
+        if success:
             self._in_trade = True
             self._state.daily_trades += 1
-            self._state.trading_day += 1  # trade count for risk tiers
+            self._state.trading_day += 1
             self._risk.set_trading_day(self._state.trading_day)
             msg = (
                 f"ENTERED {direction}\n"
-                f"Qty: {pos['qty']}\n"
+                f"Total Qty: {total_qty}\n"
                 f"Entry: {pos['entry']:.2f}\n"
-                f"SL: {pos['sl']:.2f}\n"
-                f"TP: {pos['tp']:.2f}\n"
+                f"SL: {sl:.2f}\n"
+                f"TP1: {tp1:.2f} x{qty1}\n"
+                f"TP2: {tp2:.2f} x{qty2}\n"
                 f"Risk: ${pos['risk_dollars']:.2f}"
             )
             log.info(msg)

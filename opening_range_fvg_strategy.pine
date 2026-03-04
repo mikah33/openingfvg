@@ -7,7 +7,8 @@ strategy("OR FVG v11", overlay=true, max_lines_count=500, max_boxes_count=500, m
 // ── Inputs ──────────────────────────────────────────────────────────
 tz         = input.string("America/New_York", "Timezone", options=["America/New_York", "America/Chicago", "America/Los_Angeles", "UTC"])
 setupMins  = input.int(120, "Setup Expiry (minutes)", minval=15, maxval=240, step=15)
-rrRatio    = input.float(1.75, "Risk:Reward Ratio", minval=1.0, step=0.1)
+rrTP1      = input.float(1.4, "TP1 R:R (scale out half)", minval=0.5, step=0.1)
+rrTP2      = input.float(1.85, "TP2 R:R (runner)", minval=1.0, step=0.1)
 riskDay1   = input.float(33.0, "Trade 1 Risk %", minval=1.0, maxval=100.0, step=1.0) / 100.0
 riskDay2   = input.float(25.0, "Trade 2 Risk %", minval=1.0, maxval=100.0, step=1.0) / 100.0
 riskDay3   = input.float(15.0, "Trade 3+ Risk %", minval=1.0, maxval=100.0, step=1.0) / 100.0
@@ -209,44 +210,58 @@ shortSignal = phase == 2 and bar_index > breakoutBar and bias == -1 and not na(r
 if longSignal
     entryPx = close
     slPx    = retestSL
-    tpPx    = close + (close - retestSL) * rrRatio
     riskPts = close - retestSL
+    tp1Px   = close + riskPts * rrTP1
+    tp2Px   = close + riskPts * rrTP2
     riskDol = riskPts * syminfo.pointvalue
     qty     = math.ceil(strategy.equity * riskPct / riskDol)
     if qty >= 1
         tradeCount += 1
         phase := 4
-        strategy.entry("Long", strategy.long, qty=qty, alert_message='{"action":"LONG_ENTRY","entry_price":' + str.tostring(entryPx) + ',"stop_loss":' + str.tostring(slPx) + ',"take_profit":' + str.tostring(tpPx) + ',"qty":' + str.tostring(qty) + ',"passphrase":"' + passKey + '"}')
-        strategy.exit("Long TP/SL", "Long", stop=slPx, limit=tpPx)
+        qty1 = qty >= 2 ? math.floor(qty / 2) : 0
+        qty2 = qty - qty1
+        strategy.entry("Long", strategy.long, qty=qty, alert_message='{"action":"LONG_ENTRY","entry_price":' + str.tostring(entryPx) + ',"stop_loss":' + str.tostring(slPx) + ',"tp1":' + str.tostring(tp1Px) + ',"tp2":' + str.tostring(tp2Px) + ',"qty":' + str.tostring(qty) + ',"passphrase":"' + passKey + '"}')
+        if qty1 > 0
+            strategy.exit("Long TP1", "Long", limit=tp1Px, qty=qty1)
+        strategy.exit("Long TP2/SL", "Long", stop=slPx, limit=tp2Px)
         label.new(bar_index, low, "LONG", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.large)
         if showRR
             line.new(bar_index, entryPx, bar_index + 50, entryPx, color=color.yellow, style=line.style_solid, width=2)
             line.new(bar_index, slPx, bar_index + 50, slPx, color=color.red, style=line.style_solid, width=2)
-            line.new(bar_index, tpPx, bar_index + 50, tpPx, color=color.green, style=line.style_solid, width=2)
+            line.new(bar_index, tp1Px, bar_index + 50, tp1Px, color=color.orange, style=line.style_dashed, width=1)
+            line.new(bar_index, tp2Px, bar_index + 50, tp2Px, color=color.green, style=line.style_solid, width=2)
             label.new(bar_index + 50, entryPx, "Entry " + str.tostring(entryPx, "#.##") + "  (x" + str.tostring(qty) + ")", style=label.style_label_left, color=color.yellow, textcolor=color.black, size=size.normal)
             label.new(bar_index + 50, slPx, "SL " + str.tostring(slPx, "#.##") + "  (-$" + str.tostring(riskPts * qty * syminfo.pointvalue, "#.##") + ")", style=label.style_label_left, color=color.red, textcolor=color.white, size=size.normal)
-            label.new(bar_index + 50, tpPx, "TP " + str.tostring(tpPx, "#.##") + "  (+$" + str.tostring((tpPx - entryPx) * qty * syminfo.pointvalue, "#.##") + ")", style=label.style_label_left, color=color.green, textcolor=color.white, size=size.normal)
+            label.new(bar_index + 50, tp1Px, "TP1 " + str.tostring(tp1Px, "#.##") + " x" + str.tostring(qty1), style=label.style_label_left, color=color.orange, textcolor=color.white, size=size.small)
+            label.new(bar_index + 50, tp2Px, "TP2 " + str.tostring(tp2Px, "#.##") + " x" + str.tostring(qty2), style=label.style_label_left, color=color.green, textcolor=color.white, size=size.normal)
 
 if shortSignal
     entryPx = close
     slPx    = retestSL
-    tpPx    = close - (retestSL - close) * rrRatio
     riskPts = retestSL - close
+    tp1Px   = close - riskPts * rrTP1
+    tp2Px   = close - riskPts * rrTP2
     riskDol = riskPts * syminfo.pointvalue
     qty     = math.ceil(strategy.equity * riskPct / riskDol)
     if qty >= 1
         tradeCount += 1
         phase := 4
-        strategy.entry("Short", strategy.short, qty=qty, alert_message='{"action":"SHORT_ENTRY","entry_price":' + str.tostring(entryPx) + ',"stop_loss":' + str.tostring(slPx) + ',"take_profit":' + str.tostring(tpPx) + ',"qty":' + str.tostring(qty) + ',"passphrase":"' + passKey + '"}')
-        strategy.exit("Short TP/SL", "Short", stop=slPx, limit=tpPx)
+        qty1 = qty >= 2 ? math.floor(qty / 2) : 0
+        qty2 = qty - qty1
+        strategy.entry("Short", strategy.short, qty=qty, alert_message='{"action":"SHORT_ENTRY","entry_price":' + str.tostring(entryPx) + ',"stop_loss":' + str.tostring(slPx) + ',"tp1":' + str.tostring(tp1Px) + ',"tp2":' + str.tostring(tp2Px) + ',"qty":' + str.tostring(qty) + ',"passphrase":"' + passKey + '"}')
+        if qty1 > 0
+            strategy.exit("Short TP1", "Short", limit=tp1Px, qty=qty1)
+        strategy.exit("Short TP2/SL", "Short", stop=slPx, limit=tp2Px)
         label.new(bar_index, high, "SHORT", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.large)
         if showRR
             line.new(bar_index, entryPx, bar_index + 50, entryPx, color=color.yellow, style=line.style_solid, width=2)
             line.new(bar_index, slPx, bar_index + 50, slPx, color=color.red, style=line.style_solid, width=2)
-            line.new(bar_index, tpPx, bar_index + 50, tpPx, color=color.green, style=line.style_solid, width=2)
+            line.new(bar_index, tp1Px, bar_index + 50, tp1Px, color=color.orange, style=line.style_dashed, width=1)
+            line.new(bar_index, tp2Px, bar_index + 50, tp2Px, color=color.green, style=line.style_solid, width=2)
             label.new(bar_index + 50, entryPx, "Entry " + str.tostring(entryPx, "#.##") + "  (x" + str.tostring(qty) + ")", style=label.style_label_left, color=color.yellow, textcolor=color.black, size=size.normal)
             label.new(bar_index + 50, slPx, "SL " + str.tostring(slPx, "#.##") + "  (-$" + str.tostring(riskPts * qty * syminfo.pointvalue, "#.##") + ")", style=label.style_label_left, color=color.red, textcolor=color.white, size=size.normal)
-            label.new(bar_index + 50, tpPx, "TP " + str.tostring(tpPx, "#.##") + "  (+$" + str.tostring((tpPx - entryPx) * qty * syminfo.pointvalue, "#.##") + ")", style=label.style_label_left, color=color.green, textcolor=color.white, size=size.normal)
+            label.new(bar_index + 50, tp1Px, "TP1 " + str.tostring(tp1Px, "#.##") + " x" + str.tostring(qty1), style=label.style_label_left, color=color.orange, textcolor=color.white, size=size.small)
+            label.new(bar_index + 50, tp2Px, "TP2 " + str.tostring(tp2Px, "#.##") + " x" + str.tostring(qty2), style=label.style_label_left, color=color.green, textcolor=color.white, size=size.normal)
 
 // ── Signal Markers ──────────────────────────────────────────────────
 plotshape(longSignal, title="Long", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.small)
