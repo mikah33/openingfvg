@@ -260,7 +260,7 @@ if longSignal
         qty2 = qty - qty1
         strategy.entry("Long", strategy.long, qty=qty, alert_message='{"action":"LONG_ENTRY","entry_price":' + str.tostring(entryPx) + ',"stop_loss":' + str.tostring(slPx) + ',"tp1":' + str.tostring(tp1Px) + ',"tp2":' + str.tostring(tp2Px) + ',"qty":' + str.tostring(qty) + ',"passphrase":"' + passKey + '"}')
         if qty1 > 0
-            strategy.exit("Long TP1", "Long", limit=tp1Px, qty=qty1)
+            strategy.exit("Long TP1", "Long", stop=slPx, limit=tp1Px, qty=qty1)
         strategy.exit("Long TP2/SL", "Long", stop=slPx, limit=tp2Px)
         isRebound = hadLossToday ? " (REBOUND)" : ""
         label.new(bar_index, low, "LONG" + isRebound, style=label.style_label_up, color=hadLossToday ? color.purple : color.green, textcolor=color.white, size=size.large)
@@ -291,7 +291,7 @@ if shortSignal
         qty2 = qty - qty1
         strategy.entry("Short", strategy.short, qty=qty, alert_message='{"action":"SHORT_ENTRY","entry_price":' + str.tostring(entryPx) + ',"stop_loss":' + str.tostring(slPx) + ',"tp1":' + str.tostring(tp1Px) + ',"tp2":' + str.tostring(tp2Px) + ',"qty":' + str.tostring(qty) + ',"passphrase":"' + passKey + '"}')
         if qty1 > 0
-            strategy.exit("Short TP1", "Short", limit=tp1Px, qty=qty1)
+            strategy.exit("Short TP1", "Short", stop=slPx, limit=tp1Px, qty=qty1)
         strategy.exit("Short TP2/SL", "Short", stop=slPx, limit=tp2Px)
         isRebound = hadLossToday ? " (REBOUND)" : ""
         label.new(bar_index, high, "SHORT" + isRebound, style=label.style_label_down, color=hadLossToday ? color.purple : color.red, textcolor=color.white, size=size.large)
