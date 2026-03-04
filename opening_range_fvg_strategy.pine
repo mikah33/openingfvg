@@ -116,28 +116,27 @@ bullFVG0 = low > high[2] - fvgTol
 bearFVG0 = high < low[2] + fvgTol
 
 // ── Track FVGs as they form (every bar) ──────────────────────────────
-// Keep the FVG closest to the OR breakout level, not just the most recent.
-// Bull: closest to OR high (retest zone for pullback after upside breakout)
-// Bear: closest to OR low (retest zone for pullback after downside breakout)
+// Keep the LARGEST FVG (biggest gap = strongest imbalance, deeper retest = safer trade).
+// Small FVGs on low timeframes are noise; bigger ones are legit.
 fvgMaxAge = 15
 if phase >= 1
     if bullFVG0
         newTop = low
         newBot = high[2]
-        newDist = math.abs(newTop - orHigh)
+        newSize = newTop - newBot
         oldValid = not na(lastBullTop) and (bar_index - lastBullBar <= fvgMaxAge)
-        oldDist = oldValid ? math.abs(lastBullTop - orHigh) : 99999.0
-        if newDist <= oldDist
+        oldSize = oldValid ? (lastBullTop - lastBullBot) : 0.0
+        if newSize >= oldSize
             lastBullTop := newTop
             lastBullBot := newBot
             lastBullBar := bar_index - 2
     if bearFVG0
         newTop = low[2]
         newBot = high
-        newDist = math.abs(newBot - orLow)
+        newSize = newTop - newBot
         oldValid = not na(lastBearBot) and (bar_index - lastBearBar <= fvgMaxAge)
-        oldDist = oldValid ? math.abs(lastBearBot - orLow) : 99999.0
-        if newDist <= oldDist
+        oldSize = oldValid ? (lastBearTop - lastBearBot) : 0.0
+        if newSize >= oldSize
             lastBearTop := newTop
             lastBearBot := newBot
             lastBearBar := bar_index - 2
