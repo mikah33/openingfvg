@@ -116,30 +116,35 @@ bullFVG0 = low > high[2] - fvgTol
 bearFVG0 = high < low[2] + fvgTol
 
 // ── Track FVGs as they form (every bar) ──────────────────────────────
-// Keep the LARGEST FVG (biggest gap = strongest imbalance, deeper retest = safer trade).
-// Small FVGs on low timeframes are noise; bigger ones are legit.
+// Keep the FVG closest to OR level, but filter out tiny noise gaps.
+// Min size = 20% of ATR — small FVGs on low TF aren't legit.
 fvgMaxAge = 15
+minFvgSize = atrVal * 0.2
 if phase >= 1
     if bullFVG0
         newTop = low
         newBot = high[2]
         newSize = newTop - newBot
-        oldValid = not na(lastBullTop) and (bar_index - lastBullBar <= fvgMaxAge)
-        oldSize = oldValid ? (lastBullTop - lastBullBot) : 0.0
-        if newSize >= oldSize
-            lastBullTop := newTop
-            lastBullBot := newBot
-            lastBullBar := bar_index - 2
+        if newSize >= minFvgSize
+            newDist = math.abs(newTop - orHigh)
+            oldValid = not na(lastBullTop) and (bar_index - lastBullBar <= fvgMaxAge)
+            oldDist = oldValid ? math.abs(lastBullTop - orHigh) : 99999.0
+            if newDist <= oldDist
+                lastBullTop := newTop
+                lastBullBot := newBot
+                lastBullBar := bar_index - 2
     if bearFVG0
         newTop = low[2]
         newBot = high
         newSize = newTop - newBot
-        oldValid = not na(lastBearBot) and (bar_index - lastBearBar <= fvgMaxAge)
-        oldSize = oldValid ? (lastBearTop - lastBearBot) : 0.0
-        if newSize >= oldSize
-            lastBearTop := newTop
-            lastBearBot := newBot
-            lastBearBar := bar_index - 2
+        if newSize >= minFvgSize
+            newDist = math.abs(newBot - orLow)
+            oldValid = not na(lastBearBot) and (bar_index - lastBearBar <= fvgMaxAge)
+            oldDist = oldValid ? math.abs(lastBearBot - orLow) : 99999.0
+            if newDist <= oldDist
+                lastBearTop := newTop
+                lastBearBot := newBot
+                lastBearBar := bar_index - 2
 
 // ── STEP 1: Invalidation ─────────────────────────────────────────────
 // Before retest: invalidate if close blows through FVG boundary
