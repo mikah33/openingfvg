@@ -49,12 +49,40 @@ var float lastBearTop = na
 var float lastBearBot = na
 var int   lastBearBar = 0
 var int   tradeCount  = 0    // counts trades taken: 1 = first trade, 2 = second, 3+ = subsequent
+var bool  hadLossToday  = false  // did we take a loss today?
+var bool  reboundTaken  = false  // already took our one rebound?
 
 // ── Dynamic Risk: 33% trade 1, 25% trade 2, 15% trade 3+ (compounds off equity) ──
 riskPct = tradeCount < 1 ? riskDay1 : tradeCount == 1 ? riskDay2 : riskDay3
 
+// ── Rebound Detection: after SL hit, reset to scanning for opposite breakout ──
+wasInTrade = strategy.position_size[1] != 0
+notInTrade = strategy.position_size == 0
+tradeClosed = wasInTrade and notInTrade
+
+if tradeClosed and phase == 4
+    lastIdx = strategy.closedtrades - 1
+    if lastIdx >= 0
+        lastProfit = strategy.closedtrades.profit(lastIdx)
+        if lastProfit < 0 and not reboundTaken
+            // Loss hit — SL ripped through iFVG, look for rebound trade
+            hadLossToday := true
+            phase       := 1   // back to scanning
+            bias        := 0
+            retestLevel := na
+            retestSL    := na
+            // Reset FVG tracking for fresh detection
+            lastBullTop := na
+            lastBullBot := na
+            lastBullBar := 0
+            lastBearTop := na
+            lastBearBot := na
+            lastBearBar := 0
+
 // ── Phase 0: Build OR ───────────────────────────────────────────────
 if newOR
+    hadLossToday := false
+    reboundTaken := false
     orHigh := high
     orLow  := low
     phase  := 0
@@ -93,18 +121,31 @@ bullFVG0 = low > high[2] - fvgTol
 bearFVG0 = high < low[2] + fvgTol
 
 // ── Track FVGs as they form (every bar) ──────────────────────────────
-// Save the most recent bull/bear FVG coords so we don't miss FVGs
-// that formed early in a multi-bar breakout move.
+// Keep the FVG closest to the OR breakout level, not just the most recent.
+// Bull: closest to OR high (retest zone for pullback after upside breakout)
+// Bear: closest to OR low (retest zone for pullback after downside breakout)
 fvgMaxAge = 15
 if phase >= 1
     if bullFVG0
-        lastBullTop := low
-        lastBullBot := high[2]
-        lastBullBar := bar_index - 2
+        newTop = low
+        newBot = high[2]
+        newDist = math.abs(newTop - orHigh)
+        oldValid = not na(lastBullTop) and (bar_index - lastBullBar <= fvgMaxAge)
+        oldDist = oldValid ? math.abs(lastBullTop - orHigh) : 99999.0
+        if newDist <= oldDist
+            lastBullTop := newTop
+            lastBullBot := newBot
+            lastBullBar := bar_index - 2
     if bearFVG0
-        lastBearTop := low[2]
-        lastBearBot := high
-        lastBearBar := bar_index - 2
+        newTop = low[2]
+        newBot = high
+        newDist = math.abs(newBot - orLow)
+        oldValid = not na(lastBearBot) and (bar_index - lastBearBar <= fvgMaxAge)
+        oldDist = oldValid ? math.abs(lastBearBot - orLow) : 99999.0
+        if newDist <= oldDist
+            lastBearTop := newTop
+            lastBearBot := newBot
+            lastBearBar := bar_index - 2
 
 // ── STEP 1: Invalidation ─────────────────────────────────────────────
 // Before retest: invalidate if close blows through FVG boundary
@@ -217,6 +258,8 @@ if longSignal
     qty     = math.ceil(strategy.equity * riskPct / riskDol)
     if qty >= 1
         tradeCount += 1
+        if hadLossToday
+            reboundTaken := true
         phase := 4
         qty1 = qty >= 2 ? math.floor(qty / 2) : 0
         qty2 = qty - qty1
@@ -224,7 +267,8 @@ if longSignal
         if qty1 > 0
             strategy.exit("Long TP1", "Long", limit=tp1Px, qty=qty1)
         strategy.exit("Long TP2/SL", "Long", stop=slPx, limit=tp2Px)
-        label.new(bar_index, low, "LONG", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.large)
+        isRebound = hadLossToday ? " (REBOUND)" : ""
+        label.new(bar_index, low, "LONG" + isRebound, style=label.style_label_up, color=hadLossToday ? color.purple : color.green, textcolor=color.white, size=size.large)
         if showRR
             line.new(bar_index, entryPx, bar_index + 50, entryPx, color=color.yellow, style=line.style_solid, width=2)
             line.new(bar_index, slPx, bar_index + 50, slPx, color=color.red, style=line.style_solid, width=2)
@@ -245,6 +289,8 @@ if shortSignal
     qty     = math.ceil(strategy.equity * riskPct / riskDol)
     if qty >= 1
         tradeCount += 1
+        if hadLossToday
+            reboundTaken := true
         phase := 4
         qty1 = qty >= 2 ? math.floor(qty / 2) : 0
         qty2 = qty - qty1
@@ -252,7 +298,8 @@ if shortSignal
         if qty1 > 0
             strategy.exit("Short TP1", "Short", limit=tp1Px, qty=qty1)
         strategy.exit("Short TP2/SL", "Short", stop=slPx, limit=tp2Px)
-        label.new(bar_index, high, "SHORT", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.large)
+        isRebound = hadLossToday ? " (REBOUND)" : ""
+        label.new(bar_index, high, "SHORT" + isRebound, style=label.style_label_down, color=hadLossToday ? color.purple : color.red, textcolor=color.white, size=size.large)
         if showRR
             line.new(bar_index, entryPx, bar_index + 50, entryPx, color=color.yellow, style=line.style_solid, width=2)
             line.new(bar_index, slPx, bar_index + 50, slPx, color=color.red, style=line.style_solid, width=2)
