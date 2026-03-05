@@ -51,6 +51,7 @@ var int   lastBearBar = 0
 var int   tradeCount  = 0    // counts trades taken: 1 = first trade, 2 = second, 3+ = subsequent
 var bool  hadLossToday  = false  // did we take a loss today?
 var bool  reboundTaken  = false  // already took our one rebound?
+var float deepestPenetration = na  // tracks deepest wick into FVG
 
 // ── Dynamic Risk: 33% trade 1, 25% trade 2, 15% trade 3+ (compounds off equity) ──
 riskPct = tradeCount < 1 ? riskDay1 : tradeCount == 1 ? riskDay2 : riskDay3
@@ -73,6 +74,7 @@ if tradeClosed and phase == 4
             bias        := 0
             retestLevel := na
             retestSL    := na
+            deepestPenetration := na
 
 // ── Phase 0: Build OR ───────────────────────────────────────────────
 if newOR
@@ -94,6 +96,7 @@ if newOR
     lastBearTop := na
     lastBearBot := na
     lastBearBar := 0
+    deepestPenetration := na
 
 if phase == 0 and inOR and not newOR
     orHigh := math.max(orHigh, high)
@@ -170,6 +173,7 @@ if phase == 2
             phase       := 1
             retestLevel := na
             retestSL    := na
+            deepestPenetration := na
             if strategy.position_size != 0
                 strategy.close_all("Invalidated", alert_message='{"action":"CLOSE_ALL","reason":"Invalidated","passphrase":"' + passKey + '"}')
     if bias == -1
@@ -179,6 +183,7 @@ if phase == 2
             phase       := 1
             retestLevel := na
             retestSL    := na
+            deepestPenetration := na
             if strategy.position_size != 0
                 strategy.close_all("Invalidated", alert_message='{"action":"CLOSE_ALL","reason":"Invalidated","passphrase":"' + passKey + '"}')
 
@@ -200,6 +205,7 @@ if phase == 1 or phase == 2
         breakoutBar := bar_index
         retestLevel := na
         retestSL    := na
+        deepestPenetration := na
         if strategy.position_size != 0
             strategy.close_all("Bias Flip", alert_message='{"action":"CLOSE_ALL","reason":"Bias Flip","passphrase":"' + passKey + '"}')
         if showFVG
@@ -216,6 +222,7 @@ if phase == 1 or phase == 2
         breakoutBar := bar_index
         retestLevel := na
         retestSL    := na
+        deepestPenetration := na
         if strategy.position_size != 0
             strategy.close_all("Bias Flip", alert_message='{"action":"CLOSE_ALL","reason":"Bias Flip","passphrase":"' + passKey + '"}')
         if showFVG
@@ -231,12 +238,16 @@ inFVG = false
 if phase == 2 and bar_index > breakoutBar
     if bias == 1 and low <= fvgTop
         inFVG := true
-        retestLevel := high   // track retest candle's high
-        retestSL    := low    // SL = retest candle's low
+        if na(deepestPenetration) or low < deepestPenetration
+            deepestPenetration := low
+            retestLevel := high
+            retestSL    := low
     if bias == -1 and high >= fvgBot
         inFVG := true
-        retestLevel := low    // track retest candle's low
-        retestSL    := high   // SL = retest candle's high
+        if na(deepestPenetration) or high > deepestPenetration
+            deepestPenetration := high
+            retestLevel := low
+            retestSL    := high
 
 // Visual indicators on retest candles (candles inside FVG zone)
 plotshape(inFVG and bias == 1,  "Retest (Bull)", location=location.belowbar, color=color.new(color.yellow, 0), style=shape.circle, size=size.tiny)
