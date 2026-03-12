@@ -1,3 +1,4 @@
+from __future__ import annotations
 import asyncio
 import signal
 import sys
@@ -17,6 +18,7 @@ from bot.tradovate.ws_orders import OrdersWS
 from bot.webhook import create_app
 from bot.processor import AlertProcessor
 from bot.telegram_bot import TelegramInterface
+from bot.price_guardian import PriceGuardian
 
 log = setup_logger()
 
@@ -28,15 +30,18 @@ class Bot:
         self._rest = TradovateREST(self._config.tradovate, self._auth)
         self._state = load_state()
         self._orders_ws: OrdersWS | None = None
-        self._queue: asyncio.Queue = asyncio.Queue()
+        self._guardian: PriceGuardian | None = None
+        self._queue: asyncio.Queue | None = None
         self._processor: AlertProcessor | None = None
         self._telegram: TelegramInterface | None = None
-        self._shutdown_event = asyncio.Event()
+        self._shutdown_event: asyncio.Event | None = None
 
     async def run(self):
+        self._queue = asyncio.Queue()
+        self._shutdown_event = asyncio.Event()
         log.info("=" * 50)
         log.info("OR FVG Webhook Bot starting — mode: %s", self._config.tradovate.mode)
-        log.info("Symbol: %s | R:R: %.2f", self._config.strategy.symbol, self._config.strategy.rr_ratio)
+        log.info("Symbol: %s | TP1 R:R: %.2f | TP2 R:R: %.2f", self._config.strategy.symbol, self._config.strategy.rr_tp1, self._config.strategy.rr_tp2)
         log.info("Webhook: /%s on port %d", self._config.webhook.secret_path, self._config.webhook.port)
         log.info("=" * 50)
 
@@ -56,6 +61,10 @@ class Bot:
         )
         self._config.tradovate.symbol = self._config.strategy.symbol
 
+        # 3b. Create price guardian (backup SL monitor)
+        self._guardian = PriceGuardian(self._config.tradovate, self._auth)
+        self._guardian.set_sl_breach_callback(self._on_guardian_trigger)
+
         # 4. Create Telegram interface
         self._telegram = TelegramInterface(self._config.telegram)
 
@@ -67,6 +76,7 @@ class Bot:
             orders_ws=self._orders_ws,
             state=self._state,
             notify=self._telegram.send,
+            guardian=self._guardian,
         )
 
         # Wire Telegram to processor and REST
@@ -99,6 +109,7 @@ class Bot:
             await asyncio.gather(
                 server.serve(),
                 self._orders_ws.connect(),
+                self._guardian.run(),
                 self._auth.refresh_loop(),
                 self._processor.run(),
                 self._telegram.start_polling(),
@@ -111,6 +122,21 @@ class Bot:
 
     async def _wait_for_shutdown(self):
         await self._shutdown_event.wait()
+
+    async def _on_guardian_trigger(self, message: str):
+        """Called by PriceGuardian when SL is breached — force close everything."""
+        log.error("GUARDIAN: %s", message)
+        try:
+            await self._orders_ws.close_all_positions("Guardian SL breach")
+            self._guardian.clear_position()
+            if self._processor:
+                self._processor._in_trade = False
+            if self._telegram:
+                await self._telegram.send(f"GUARDIAN FORCE CLOSE\n{message}")
+        except Exception as e:
+            log.error("Guardian force close failed: %s", e)
+            if self._telegram:
+                await self._telegram.send(f"GUARDIAN FORCE CLOSE FAILED: {e}\nMANUAL CLOSE NEEDED!")
 
     async def _on_fill(self, data: dict):
         log.info("Fill received: %s", data)
@@ -136,6 +162,8 @@ class Bot:
             self._processor.stop()
         if self._telegram:
             await self._telegram.stop()
+        if self._guardian:
+            self._guardian.stop()
         if self._orders_ws:
             self._orders_ws.stop()
         await self._rest.close()

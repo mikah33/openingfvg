@@ -7,11 +7,11 @@ strategy("OR FVG v11", overlay=true, max_lines_count=500, max_boxes_count=500, m
 // ── Inputs ──────────────────────────────────────────────────────────
 tz         = input.string("America/New_York", "Timezone", options=["America/New_York", "America/Chicago", "America/Los_Angeles", "UTC"])
 setupMins  = input.int(120, "Setup Expiry (minutes)", minval=15, maxval=480, step=15)
-rrTP1      = input.float(1.4, "TP1 R:R (scale out half)", minval=0.5, step=0.1)
-rrTP2      = input.float(1.75, "TP2 R:R (runner)", minval=1.0, step=0.1)
-riskDay1   = input.float(33.0, "Trade 1 Risk %", minval=1.0, maxval=100.0, step=1.0) / 100.0
-riskDay2   = input.float(25.0, "Trade 2 Risk %", minval=1.0, maxval=100.0, step=1.0) / 100.0
-riskDay3   = input.float(15.0, "Trade 3+ Risk %", minval=1.0, maxval=100.0, step=1.0) / 100.0
+rrTP1      = input.float(1.5, "TP1 R:R (scale out half)", minval=0.5, step=0.1)
+rrTP2      = input.float(2.5, "TP2 R:R (runner)", minval=1.0, step=0.1)
+riskDay1   = input.float(20.0, "Trade 1 Risk %", minval=1.0, maxval=100.0, step=1.0) / 100.0
+riskDay2   = input.float(20.0, "Trade 2 Risk %", minval=1.0, maxval=100.0, step=1.0) / 100.0
+riskDay3   = input.float(20.0, "Trade 3+ Risk %", minval=1.0, maxval=100.0, step=1.0) / 100.0
 passKey    = input.string("", "Webhook Passphrase", tooltip="Must match config.yaml passphrase for bot")
 showFVG    = input.bool(true, "Show FVG Zones")
 showRR     = input.bool(true, "Show Entry / SL / TP Lines")
@@ -277,7 +277,7 @@ if longSignal
         phase := 4
         qty1 = qty >= 2 ? math.floor(qty / 2) : 0
         qty2 = qty - qty1
-        strategy.entry("Long", strategy.long, qty=qty, alert_message='{"action":"LONG_ENTRY","entry_price":' + str.tostring(entryPx) + ',"stop_loss":' + str.tostring(slPx) + ',"tp1":' + str.tostring(tp1Px) + ',"tp2":' + str.tostring(tp2Px) + ',"qty":' + str.tostring(qty) + ',"passphrase":"' + passKey + '"}')
+        strategy.entry("Long", strategy.long, qty=qty, alert_message='{"action":"LONG_ENTRY","sl_points":' + str.tostring(riskPts) + ',"tp1_points":' + str.tostring(riskPts * rrTP1) + ',"tp2_points":' + str.tostring(riskPts * rrTP2) + ',"qty":' + str.tostring(qty) + ',"passphrase":"' + passKey + '"}')
         if qty1 > 0
             strategy.exit("Long TP1", "Long", stop=slPx, limit=tp1Px, qty=qty1)
         strategy.exit("Long TP2/SL", "Long", stop=slPx, limit=tp2Px)
@@ -308,7 +308,7 @@ if shortSignal
         phase := 4
         qty1 = qty >= 2 ? math.floor(qty / 2) : 0
         qty2 = qty - qty1
-        strategy.entry("Short", strategy.short, qty=qty, alert_message='{"action":"SHORT_ENTRY","entry_price":' + str.tostring(entryPx) + ',"stop_loss":' + str.tostring(slPx) + ',"tp1":' + str.tostring(tp1Px) + ',"tp2":' + str.tostring(tp2Px) + ',"qty":' + str.tostring(qty) + ',"passphrase":"' + passKey + '"}')
+        strategy.entry("Short", strategy.short, qty=qty, alert_message='{"action":"SHORT_ENTRY","sl_points":' + str.tostring(riskPts) + ',"tp1_points":' + str.tostring(riskPts * rrTP1) + ',"tp2_points":' + str.tostring(riskPts * rrTP2) + ',"qty":' + str.tostring(qty) + ',"passphrase":"' + passKey + '"}')
         if qty1 > 0
             strategy.exit("Short TP1", "Short", stop=slPx, limit=tp1Px, qty=qty1)
         strategy.exit("Short TP2/SL", "Short", stop=slPx, limit=tp2Px)

@@ -41,16 +41,14 @@ def create_app(config: WebhookConfig, queue: asyncio.Queue) -> FastAPI:
 
     @app.post(f"/{config.secret_path}")
     async def receive_webhook(request: Request):
-        # IP whitelist check
+        # IP check — passphrase is the real security, IP is just extra layer
         client_ip = request.client.host
-        # Check X-Forwarded-For for reverse proxy / tunnel setups
         forwarded_for = request.headers.get("X-Forwarded-For")
         if forwarded_for:
             client_ip = forwarded_for.split(",")[0].strip()
 
         if not is_allowed_ip(client_ip):
-            log.warning("Rejected webhook from unauthorized IP: %s", client_ip)
-            raise HTTPException(status_code=403, detail="Forbidden")
+            log.info("Webhook from non-whitelisted IP: %s (passphrase will be checked)", client_ip)
 
         # Parse body
         try:

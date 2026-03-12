@@ -15,6 +15,7 @@ class TradovateConfig:
     sec: str
     device_id: str = ""
     mode: str = "demo"
+    oauth_redirect_uri: str = "http://localhost:8080/oauth/callback"
 
     @property
     def rest_url(self) -> str:
@@ -102,6 +103,7 @@ def load_config(path: str = "config.yaml") -> BotConfig:
         sec=str(tv_raw["sec"]),
         device_id=tv_raw.get("device_id", ""),
         mode=tv_raw.get("mode", "demo"),
+        oauth_redirect_uri=tv_raw.get("oauth_redirect_uri", "http://localhost:8080/oauth/callback"),
     )
 
     # Auto-generate device_id if empty

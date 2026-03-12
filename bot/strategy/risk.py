@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 import math
 
@@ -69,6 +70,34 @@ class RiskManager:
             "tp": tp_price,
             "risk_dollars": actual_risk,
             "is_long": is_long,
+        }
+
+    def calculate_position_from_points(
+        self, sl_points: float, risk_per_contract: float
+    ) -> dict | None:
+        """Calculate position size from SL distance in points."""
+        if sl_points <= 0 or risk_per_contract <= 0:
+            return None
+
+        budget = self._equity * self.risk_pct
+        budget = min(budget, self._config.max_risk_dollars)
+
+        qty = math.ceil(budget / risk_per_contract)
+        if qty < 1:
+            return None
+
+        actual_risk = risk_per_contract * qty
+
+        log.info(
+            "Position calc: day=%d equity=$%.2f risk_pct=%.0f%% budget=$%.2f "
+            "risk/ct=$%.2f qty=%d actual_risk=$%.2f",
+            self._trading_day, self._equity, self.risk_pct * 100,
+            budget, risk_per_contract, qty, actual_risk,
+        )
+
+        return {
+            "qty": qty,
+            "risk_dollars": actual_risk,
         }
 
     def _snap_to_tick(self, price: float) -> float:

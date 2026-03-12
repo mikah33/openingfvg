@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -11,10 +12,9 @@ class Action(str, Enum):
 
 class TradeSignal(BaseModel):
     action: Action
-    entry_price: float
-    stop_loss: float
-    tp1: float
-    tp2: float
+    sl_points: float
+    tp1_points: float
+    tp2_points: float
     qty: int
     passphrase: str = ""
 
@@ -29,12 +29,14 @@ class WebhookPayload(BaseModel):
     """Raw incoming payload — action field determines which model to parse into."""
     action: str
     passphrase: str = ""
-    entry_price: float | None = None
-    stop_loss: float | None = None
-    tp1: float | None = None
-    tp2: float | None = None
-    qty: int | None = None
-    reason: str | None = None
+    # Point-based offsets (new format)
+    sl_points: Optional[float] = None
+    tp1_points: Optional[float] = None
+    tp2_points: Optional[float] = None
+    qty: Optional[int] = None
+    reason: Optional[str] = None
+    or_high: Optional[float] = None
+    or_low: Optional[float] = None
 
     def is_entry(self) -> bool:
         return self.action in (Action.LONG_ENTRY, Action.SHORT_ENTRY)
@@ -42,13 +44,15 @@ class WebhookPayload(BaseModel):
     def is_close(self) -> bool:
         return self.action == Action.CLOSE_ALL
 
+    def is_or_identified(self) -> bool:
+        return self.action == "OR_IDENTIFIED"
+
     def to_trade_signal(self) -> TradeSignal:
         return TradeSignal(
             action=Action(self.action),
-            entry_price=self.entry_price,
-            stop_loss=self.stop_loss,
-            tp1=self.tp1,
-            tp2=self.tp2,
+            sl_points=self.sl_points,
+            tp1_points=self.tp1_points,
+            tp2_points=self.tp2_points,
             qty=self.qty,
             passphrase=self.passphrase,
         )
